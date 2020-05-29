@@ -36,7 +36,7 @@ def build_model(src_vocab_size, tgt_vocab_size, dk, head_number=2):
     context = Dense(units=dk, activation=None)(context)
     context = Dropout(rate=0.1)(context)
     context = Add()([context, attention_out_src])
-    context = LayerNormalization()(context)
+    context = LayerNormalization(name="encoder_out")(context)
     # ================================== Encoder ==================================
 
     # ================================== Decoder ==================================
@@ -64,7 +64,7 @@ def build_model(src_vocab_size, tgt_vocab_size, dk, head_number=2):
     multihead_tgt = Dense(units=dk, activation=None)(multihead_tgt)
     multihead_tgt = Dropout(0.1)(multihead_tgt)
     multihead_tgt = Add()([multihead_tgt, emb_inp_tgt])
-    attention_out_tgt = LayerNormalization()(multihead_tgt)
+    attention_out_tgt = LayerNormalization(name="decoder_first_out")(multihead_tgt)
 
     # merge encoder & decoder
     # multihead attention
@@ -83,15 +83,15 @@ def build_model(src_vocab_size, tgt_vocab_size, dk, head_number=2):
     multihead = Concatenate(axis=-1)(multihead)
     multihead = Dense(units=dk, activation=None)(multihead)
     multihead = Dropout(rate=0.1)(multihead)
-    multihead = Add()([multihead, context])
-    attention_out = LayerNormalization()(multihead)
+    multihead = Add()([multihead, attention_out_tgt])
+    attention_out = LayerNormalization(name="decoder_second_out")(multihead)
 
     # ffn
     final_feature = Dense(units=dk, activation='relu')(attention_out)
     final_feature = Dense(units=dk, activation=None)(final_feature)
     final_feature = Dropout(rate=0.1)(final_feature)
     final_feature = Add()([final_feature, attention_out])
-    final_feature = LayerNormalization()(final_feature)
+    final_feature = LayerNormalization(name="final_out")(final_feature)
 
     # logit
     logit = Dense(units=tgt_vocab_size, activation='softmax')(final_feature)
@@ -103,12 +103,29 @@ def build_model(src_vocab_size, tgt_vocab_size, dk, head_number=2):
 
 
 if __name__ == "__main__":
-    model = build_model(src_vocab_size=10, tgt_vocab_size=10, dk=50)
-    X = np.arange(5).reshape(1, -1)
-    pos = np.random.uniform(low=0, high=1, size=(1, 5, 50))
-    print(model.predict([X, pos, X, pos]))
-
-
-
-
+    # model = build_model(src_vocab_size=10, tgt_vocab_size=10, dk=50)
+    # X = np.arange(5).reshape(1, -1)
+    # pos = np.random.uniform(low=0, high=1, size=(1, 5, 50))
+    # print(model.predict([X, pos, X, pos]))
+    tf.enable_eager_execution()
+    src_vocab_size = 3
+    tgt_vocab_size = 3
+    src_seq_len = 10
+    tgt_seq_len = 10
+    num_samples = 100000
+    dk = 10
+    from dataset import Dataset
+    dd = Dataset(src_vocab_size=src_vocab_size,
+                 tgt_vocab_size=tgt_vocab_size,
+                 src_seq_len=src_seq_len,
+                 tgt_seq_len=tgt_seq_len,
+                 num_samples=num_samples)
+    x, y_in, y_out = dd.generate()
+    y_out_one_hot = tf.one_hot(y_out, depth=tgt_vocab_size).numpy()
+    model = build_model(src_vocab_size=src_vocab_size,
+                        tgt_vocab_size=tgt_vocab_size,
+                        dk=dk)
+    src_pos = np.repeat(np.random.uniform(low=0, high=1, size=(1, src_seq_len, dk)), repeats=num_samples, axis=0)
+    tgt_pos = src_pos[:, :(tgt_seq_len-1), :]
+    model.fit(x=[x, src_pos, y_in, tgt_pos], y=y_out_one_hot, batch_size=32, validation_split=0.3, epochs=4)
 
